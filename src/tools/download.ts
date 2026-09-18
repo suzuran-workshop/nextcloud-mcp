@@ -1,11 +1,9 @@
 import { query } from "../db.js";
 import { downloadFile } from "../nextcloud/webdav.js";
-import { checkPermissions } from "../nextcloud/permission.js";
 import { config } from "../config.js";
 
 export interface DownloadFileArgs {
   filePath: string;
-  userId?: string;
 }
 
 export async function downloadFileTool(args: DownloadFileArgs) {
@@ -29,15 +27,6 @@ export async function downloadFileTool(args: DownloadFileArgs) {
   }
 
   const file = fileResult.rows[0] as Record<string, unknown>;
-
-  // Permission check
-  if (args.userId && file.nextcloud_file_id) {
-    const perms = await checkPermissions(args.userId, [String(file.nextcloud_file_id)]);
-    const perm = perms.get(String(file.nextcloud_file_id));
-    if (!perm?.canRead) {
-      return { ok: false, message: `User ${args.userId} does not have permission for: ${filePath}` };
-    }
-  }
 
   // Size check
   const maxBytes = config.maxDownloadMb * 1024 * 1024;

@@ -1,12 +1,10 @@
 import { query } from "../db.js";
 import { downloadFile } from "../nextcloud/webdav.js";
-import { checkPermissions } from "../nextcloud/permission.js";
 import { extractTextFromBuffer, isExtractableFile } from "../extractors/text.js";
 import { config } from "../config.js";
 
 export interface ReadFileArgs {
   filePath: string;
-  userId?: string;
   maxChars?: number;
   chunkIndex?: number;
 }
@@ -35,16 +33,7 @@ export async function readFile(args: ReadFileArgs) {
 
   const file = fileResult.rows[0] as Record<string, unknown>;
 
-  // 2. Permission check if userId provided
-  if (args.userId && file.nextcloud_file_id) {
-    const perms = await checkPermissions(args.userId, [String(file.nextcloud_file_id)]);
-    const perm = perms.get(String(file.nextcloud_file_id));
-    if (!perm?.canRead) {
-      return { ok: false, message: `User ${args.userId} does not have read permission for: ${filePath}` };
-    }
-  }
-
-  // 3. Try cached text from document_texts
+  // 2. Try cached text from document_texts
   const existing = await query(
     `SELECT content_text, content_hash, extract_status
      FROM document_texts
@@ -70,7 +59,7 @@ export async function readFile(args: ReadFileArgs) {
     };
   }
 
-  // 4. Not cached or not text-extractable -> download via WebDAV
+  // 3. Not cached or not text-extractable -> download via WebDAV
   const extension = String(file.extension || "");
   if (!isExtractableFile(extension)) {
     return {
@@ -84,7 +73,7 @@ export async function readFile(args: ReadFileArgs) {
     };
   }
 
-  // 5. Size check
+  // 4. Size check
   if (Number(file.size_bytes || 0) > config.maxExtractBytes) {
     return {
       ok: false,

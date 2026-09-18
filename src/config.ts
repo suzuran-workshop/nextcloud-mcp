@@ -37,15 +37,6 @@ export const config = {
   nextcloudUser: requiredEnv("NEXTCLOUD_USER"),
   nextcloudPassword: requiredEnv("NEXTCLOUD_APP_PASSWORD"),
 
-  // Custom app API (optional - for permission filtering)
-  permissionUrl:
-    env("NEXTCLOUD_PERMISSION_URL",
-      "http://nextcloud/index.php/apps/school_ai_permission/api/v1/files/check"),
-  personStorageUrl:
-    env("NEXTCLOUD_PERSON_STORAGE_URL",
-      "http://nextcloud/index.php/apps/school_ai_permission/api/v1/storage/person"),
-  permissionToken: env("NEXTCLOUD_PERMISSION_TOKEN"),
-
   // Limits
   maxDownloadMb: envInt("MAX_DOWNLOAD_MB", 50),
   maxExtractFileMb,
@@ -61,7 +52,4 @@ export const {
   webdavUrl,
   nextcloudUser,
   nextcloudPassword,
-  permissionUrl,
-  personStorageUrl,
-  permissionToken,
 } = config;

@@ -1,10 +1,8 @@
 import { query } from "../db.js";
-import { authorizeCandidateRows } from "../nextcloud/permission.js";
 import { formatBytes, formatDateTime } from "../nextcloud/utils.js";
 
 export interface SearchFilesArgs {
   query: string;
-  userId?: string;
   limit?: number;
   extension?: string;
   folderPath?: string;
@@ -39,7 +37,7 @@ export async function searchFiles(args: SearchFilesArgs) {
     conditions.push(`f.folder_path ILIKE $${++paramIndex}`);
   }
 
-  params.push(limit * 5);
+  params.push(limit);
   const cursorLimitIdx = ++paramIndex;
 
   const sql = `
@@ -61,13 +59,7 @@ export async function searchFiles(args: SearchFilesArgs) {
 
   const result = await query(sql, params);
 
-  // Permission filter
-  let rows = result.rows;
-  if (args.userId) {
-    rows = await authorizeCandidateRows(args.userId, rows, limit);
-  } else {
-    rows = rows.slice(0, limit);
-  }
+  const rows = result.rows.slice(0, limit);
 
   return {
     ok: true,

@@ -14,9 +14,7 @@ import { searchFiles } from "./tools/search.js";
 import { listDirectory } from "./tools/list.js";
 import { readFile } from "./tools/read.js";
 import { downloadFileTool } from "./tools/download.js";
-import { getStorageStats } from "./tools/storage.js";
 import { getSyncStatus } from "./tools/sync.js";
-import { checkPermissionTool } from "./tools/permission.js";
 
 const PORT = Number(process.env.PORT || 3101);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -27,18 +25,13 @@ const TOOLS: Tool[] = [
     description:
       "Search files in Nextcloud by name, path, or keyword. " +
       "Searches the pre-indexed files_index table using ILIKE matching. " +
-      "Supports Chinese and English search terms. " +
-      "Results can be permission-filtered by providing a userId.",
+      "Supports Chinese and English search terms.",
     inputSchema: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description: "Search keyword or filename. Supports Chinese characters and partial matches.",
-        },
-        userId: {
-          type: "string",
-          description: "Nextcloud user ID for permission filtering. If provided, only files this user can read are returned.",
         },
         limit: {
           type: "number",
@@ -62,8 +55,7 @@ const TOOLS: Tool[] = [
     name: "nextcloud_list_directory",
     description:
       "List files and subdirectories in a Nextcloud directory path. " +
-      "Reads from the files_index table. Supports recursive listing. " +
-      "Results can be permission-filtered.",
+      "Reads from the files_index table. Supports recursive listing.",
     inputSchema: {
       type: "object",
       properties: {
@@ -71,10 +63,6 @@ const TOOLS: Tool[] = [
           type: "string",
           default: "/",
           description: "Directory path in Nextcloud (e.g., '/教务处/考勤'). Default: root '/'.",
-        },
-        userId: {
-          type: "string",
-          description: "Nextcloud user ID for permission filtering.",
         },
         recursive: {
           type: "boolean",
@@ -97,8 +85,7 @@ const TOOLS: Tool[] = [
       "Read the text content of a file from Nextcloud. " +
       "Supports txt, md, csv, docx, xlsx, pdf files. " +
       "Returns extracted text (not raw bytes). " +
-      "Tries cached text first, falls back to live WebDAV download + extraction. " +
-      "Permission-checked when userId is provided.",
+      "Tries cached text first, falls back to live WebDAV download + extraction.",
     inputSchema: {
       type: "object",
       properties: {
@@ -107,10 +94,6 @@ const TOOLS: Tool[] = [
           description:
             "The full file path in Nextcloud (e.g., '/教务处/考勤/2025年1月考勤.xlsx'). " +
             "Use nextcloud_search_files or nextcloud_list_directory to find paths.",
-        },
-        userId: {
-          type: "string",
-          description: "Nextcloud user ID for permission check.",
         },
         maxChars: {
           type: "number",
@@ -134,58 +117,8 @@ const TOOLS: Tool[] = [
           type: "string",
           description: "The full file path in Nextcloud.",
         },
-        userId: {
-          type: "string",
-          description: "Nextcloud user ID for permission check.",
-        },
       },
       required: ["filePath"],
-    },
-  },
-  {
-    name: "nextcloud_get_storage_stats",
-    description:
-      "Get storage usage statistics for a Nextcloud user or the overall index. " +
-      "Calls the school_ai_permission storage API for per-user stats. " +
-      "Falls back to index-level summary if the API is unavailable.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        userId: {
-          type: "string",
-          description: "Nextcloud user ID of the requester (for permission check).",
-        },
-        targetUserId: {
-          type: "string",
-          description:
-            "Target user to query stats for. If omitted, queries requester's own storage. " +
-            "Only admins can query other users' storage.",
-        },
-      },
-      required: ["userId"],
-    },
-  },
-  {
-    name: "nextcloud_check_permissions",
-    description:
-      "Batch-check which files a user has read permission for. " +
-      "Calls the school_ai_permission app API. " +
-      "Useful for verifying access before showing file lists to users.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        userId: {
-          type: "string",
-          description: "Nextcloud user ID.",
-        },
-        fileIds: {
-          type: "array",
-          items: { type: "string" },
-          maxItems: 200,
-          description: "Array of Nextcloud numeric file IDs. Maximum 200 per request.",
-        },
-      },
-      required: ["userId", "fileIds"],
     },
   },
   {
@@ -238,10 +171,6 @@ function createMcpServer(): Server {
           return callResult(await readFile(a));
         case "nextcloud_download_file":
           return callResult(await downloadFileTool(a));
-        case "nextcloud_get_storage_stats":
-          return callResult(await getStorageStats(a));
-        case "nextcloud_check_permissions":
-          return callResult(await checkPermissionTool(a));
         case "nextcloud_sync_status":
           return callResult(await getSyncStatus(a));
         default:
@@ -287,7 +216,6 @@ async function main() {
       ok: true,
       service: "nextcloud-mcp-server",
       nextcloud: config.nextcloudBaseUrl,
-      permissionApi: config.permissionToken ? "enabled" : "disabled",
       database: "configured",
     });
   });
@@ -296,7 +224,6 @@ async function main() {
   console.error(`MCP endpoint: http://${HOST}:${PORT}/mcp`);
   console.error(`Health check: http://${HOST}:${PORT}/health`);
   console.error(`Nextcloud: ${config.nextcloudBaseUrl}`);
-  console.error(`Permission API: ${config.permissionToken ? "enabled" : "disabled"}`);
 
   serve({
     fetch: app.fetch,

@@ -1,10 +1,8 @@
 import { query } from "../db.js";
-import { authorizeCandidateRows } from "../nextcloud/permission.js";
 import { formatBytes, formatDateTime } from "../nextcloud/utils.js";
 
 export interface ListDirectoryArgs {
   path?: string;
-  userId?: string;
   recursive?: boolean;
   limit?: number;
 }
@@ -107,13 +105,7 @@ export async function listDirectory(args: ListDirectoryArgs) {
 
   const result = await query(sql, params);
 
-  // Permission filter
-  let rows = result.rows;
-  if (args.userId) {
-    rows = await authorizeCandidateRows(args.userId, rows, limit);
-  } else {
-    rows = rows.slice(0, limit);
-  }
+  const rows = result.rows.slice(0, limit);
 
   return {
     ok: true,
