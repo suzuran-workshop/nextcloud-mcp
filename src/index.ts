@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { serve } from "@hono/node-server";
 import { randomUUID } from "crypto";
 import { config } from "./config.js";
@@ -199,14 +200,43 @@ function callResult(result: Record<string, unknown>, isError = false) {
 
 async function main() {
   const app = new Hono();
-  const mcpServer = createMcpServer();
 
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
+  // 每个 MCP 会话独立一套 Server + Transport。
+  // 共用一个 transport 时，SDK 会在首个 initialize 后拒绝后续请求
+  // （"Server already initialized"），导致第二个客户端永远连不上。
+  const sessions = new Map<string, { server: Server; transport: WebStandardStreamableHTTPServerTransport }>();
+
+  async function createSession(): Promise<WebStandardStreamableHTTPServerTransport> {
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sessionId) => {
+        sessions.set(sessionId, { server, transport });
+      },
+    });
+    const server = createMcpServer();
+    transport.onclose = () => {
+      const id = transport.sessionId;
+      if (id) sessions.delete(id);
+    };
+    await server.connect(transport);
+    return transport;
+  }
+
+  /** 取请求对应的 transport；新会话（无 session id）时新建一套。 */
+  async function resolveTransport(c: Context): Promise<WebStandardStreamableHTTPServerTransport> {
+    const sessionId = c.req.header("mcp-session-id");
+    if (sessionId) {
+      const existing = sessions.get(sessionId);
+      if (existing) return existing.transport;
+      // 未知/过期会话：交给新建的 transport 回 404，由客户端重新 initialize。
+    }
+    return createSession();
+  }
+
+  app.all("/mcp", async (c) => {
+    const transport = await resolveTransport(c);
+    return transport.handleRequest(c.req.raw);
   });
-  await mcpServer.connect(transport);
-
-  app.all("/mcp", async (c) => transport.handleRequest(c.req.raw));
 
   app.get("/health", async (c) => {
     let database = "ok";
