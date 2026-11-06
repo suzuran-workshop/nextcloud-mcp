@@ -30,10 +30,19 @@ export function toArray<T>(value: T | T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
+/** fast-xml-parser 关闭实体处理后，手动还原 PROPFIND 文本节点里的标准实体。 */
+export function decodeXmlEntities(value: string): string {
+  return String(value)
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 /**
  * Convert a WebDAV href to the user-relative path.
- * The admin WebDAV URL has the form: /remote.php/dav/files/<admin_user>/...
- * We strip everything up to and including the admin user segment.
+ * The WebDAV URL has the form: /remote.php/dav/files/<user>/...
  */
 export function hrefToUserPath(href: string): string {
   const fullUrl = hrefToFullUrl(href);
@@ -58,9 +67,7 @@ export function hrefToFullUrl(href: string): string {
   return resolved.toString();
 }
 
-/**
- * Build a user-facing Nextcloud web URL for a file.
- */
+/** Build a user-facing Nextcloud web URL for a file. */
 export function buildWebUrl(path: string): string {
   if (!path || path === "/") {
     return `${nextcloudBaseUrl}/apps/files/`;
@@ -70,6 +77,15 @@ export function buildWebUrl(path: string): string {
   const dirParam = encodeURIComponent(folder === "/" ? "/" : folder);
   const fileParam = encodeURIComponent(fileName);
   return `${nextcloudBaseUrl}/apps/files/?dir=${dirParam}&openfile=${fileParam}`;
+}
+
+export function buildDavUrl(path: string): string {
+  const base = webdavUrl.replace(/\/+$/, "");
+  const encoded = path
+    .split("/")
+    .map((segment, index) => (index === 0 ? "" : encodeURIComponent(segment)))
+    .join("/");
+  return `${base}${encoded}`;
 }
 
 export function formatBytes(value: number): string {

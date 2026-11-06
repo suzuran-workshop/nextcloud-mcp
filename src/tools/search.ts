@@ -15,30 +15,30 @@ export async function searchFiles(args: SearchFilesArgs) {
   }
 
   const limit = Math.min(Math.max(Number(args.limit || 20), 1), 200);
-  const extension = args.extension?.trim() || null;
+  const extension = args.extension?.trim().toLowerCase() || null;
   const folderPath = args.folderPath?.trim() || null;
 
-  // Build dynamic WHERE clauses
   const conditions: string[] = ["f.is_deleted = FALSE", "f.nextcloud_file_id IS NOT NULL"];
   const params: unknown[] = [];
-  let paramIndex = 0;
 
-  // ILIKE search
+  // 三个字段都复用同一个 $1，避免 paramIndex 累加错位。
   params.push(`%${searchQuery}%`);
-  conditions.push(`(f.file_name ILIKE $${++paramIndex} OR f.file_path ILIKE $${++paramIndex} OR f.folder_path ILIKE $${paramIndex})`);
+  conditions.push(
+    "(f.file_name ILIKE $1 OR f.file_path ILIKE $1 OR f.folder_path ILIKE $1)"
+  );
 
   if (extension) {
-    params.push(extension.toLowerCase());
-    conditions.push(`f.extension = $${++paramIndex}`);
+    params.push(extension);
+    conditions.push(`f.extension = $${params.length}`);
   }
 
   if (folderPath) {
     params.push(`${folderPath}%`);
-    conditions.push(`f.folder_path ILIKE $${++paramIndex}`);
+    conditions.push(`f.folder_path ILIKE $${params.length}`);
   }
 
   params.push(limit);
-  const cursorLimitIdx = ++paramIndex;
+  const limitParam = `$${params.length}`;
 
   const sql = `
     SELECT
@@ -54,11 +54,10 @@ export async function searchFiles(args: SearchFilesArgs) {
     FROM files_index f
     WHERE ${conditions.join(" AND ")}
     ORDER BY f.last_modified DESC NULLS LAST, f.updated_at DESC
-    LIMIT $${cursorLimitIdx}
+    LIMIT ${limitParam}
   `;
 
   const result = await query(sql, params);
-
   const rows = result.rows.slice(0, limit);
 
   return {

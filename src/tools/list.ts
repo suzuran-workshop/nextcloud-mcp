@@ -17,112 +17,91 @@ interface FileRow {
   size_bytes: string | number;
   last_modified: string | null;
   web_url: string | null;
-  is_directory: boolean;
 }
 
 export async function listDirectory(args: ListDirectoryArgs) {
-  const dirPath = String(args.path || "/").trim();
-  const normalizedPath = dirPath === "/" ? "/" : `/${dirPath.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+  const raw = String(args.path || "/").trim();
+  const normalizedPath = raw === "/" ? "/" : `/${raw.replace(/^\/+/, "").replace(/\/+$/, "")}`;
   const recursive = Boolean(args.recursive);
   const limit = Math.min(Math.max(Number(args.limit || 100), 1), 500);
 
-  let sql: string;
-  const params: string[] = [];
+  const prefix = normalizedPath === "/" ? "/" : `${normalizedPath}/`;
+  const dirDepth = normalizedPath.split("/").filter(Boolean).length + 2;
 
-  if (recursive) {
-    sql = `
-      SELECT DISTINCT ON (f.file_path)
-        f.file_name,
-        f.nextcloud_file_id,
-        f.file_path,
-        f.folder_path,
-        f.extension,
-        f.mime_type,
-        f.size_bytes,
-        f.last_modified,
-        f.web_url,
-        FALSE AS is_directory
-      FROM files_index f
-      WHERE f.is_deleted = FALSE
-        AND f.nextcloud_file_id IS NOT NULL
-        AND (f.file_path ILIKE $1 OR f.folder_path ILIKE $1)
-      ORDER BY f.file_path, f.last_modified DESC
-      LIMIT $2
-    `;
-    params.push(normalizedPath === "/" ? "/%" : `${normalizedPath}/%`, String(limit));
-  } else {
-    sql = `
-      WITH folder_children AS (
-        -- Files directly in this folder
-        SELECT
-          f.file_name,
-          f.nextcloud_file_id,
-          f.file_path,
-          f.folder_path,
-          f.extension,
-          f.mime_type,
-          f.size_bytes,
-          f.last_modified,
-          f.web_url,
-          FALSE AS is_directory
-        FROM files_index f
-        WHERE f.is_deleted = FALSE
-          AND f.nextcloud_file_id IS NOT NULL
-          AND f.folder_path = $1
+  const fileSql = recursive
+    ? `SELECT file_name, nextcloud_file_id, file_path, folder_path, extension,
+              mime_type, size_bytes, last_modified, web_url
+       FROM files_index
+       WHERE is_deleted = FALSE AND nextcloud_file_id IS NOT NULL
+         AND starts_with(file_path, $1)
+       ORDER BY file_path ASC
+       LIMIT $2`
+    : `SELECT file_name, nextcloud_file_id, file_path, folder_path, extension,
+              mime_type, size_bytes, last_modified, web_url
+       FROM files_index
+       WHERE is_deleted = FALSE AND nextcloud_file_id IS NOT NULL
+         AND folder_path = $1
+       ORDER BY file_name ASC
+       LIMIT $2`;
 
-        UNION ALL
+  const fileParams: unknown[] = recursive
+    ? [prefix, limit]
+    : [normalizedPath, limit];
 
-        -- Subdirectories (distinct folder_path values that are direct children)
-        SELECT DISTINCT ON (subdir_name)
-          subdir_name AS file_name,
-          NULL AS nextcloud_file_id,
-          subfolder AS file_path,
-          $1 AS folder_path,
-          '' AS extension,
-          'httpd/unix-directory' AS mime_type,
-          0 AS size_bytes,
-          NULL AS last_modified,
-          NULL AS web_url,
-          TRUE AS is_directory
-        FROM (
-          SELECT DISTINCT
-            SPLIT_PART(f.file_path, '/', $3) AS subdir_name,
-            SPLIT_PART(f.file_path, '/', $3) AS subfolder_segment
-          FROM files_index f
-          WHERE f.is_deleted = FALSE
-            AND f.file_path ILIKE $1 || '/%'
-        ) sub
-        JOIN files_index f2 ON f2.file_path ILIKE $1 || '/' || sub.subdir_name || '/%'
-          AND f2.is_deleted = FALSE
-      )
-      SELECT * FROM folder_children
-      ORDER BY is_directory DESC, file_name ASC
-      LIMIT $2
-    `;
-    const depth = normalizedPath === "/" ? 2 : normalizedPath.split("/").filter(Boolean).length + 2;
-    params.push(normalizedPath, String(limit), String(depth));
+  const fileResult = await query(fileSql, fileParams);
+  const files = (fileResult.rows as FileRow[]).map((row) => ({
+    name: row.file_name,
+    type: "file",
+    file_id: row.nextcloud_file_id,
+    file_path: row.file_path,
+    extension: row.extension,
+    mime_type: row.mime_type,
+    size: formatBytes(Number(row.size_bytes || 0)),
+    size_bytes: Number(row.size_bytes || 0),
+    last_modified: formatDateTime(row.last_modified),
+    web_url: row.web_url,
+  }));
+
+  const dirs: Array<Record<string, unknown>> = [];
+  if (!recursive) {
+    // 直接子目录：取所有以 prefix 开头的路径的第 dirDepth 个斜杠分段。
+    const dirResult = await query(
+      `SELECT DISTINCT SPLIT_PART(file_path, '/', $2) AS name
+       FROM files_index
+       WHERE is_deleted = FALSE
+         AND starts_with(file_path, $1)
+         AND SPLIT_PART(file_path, '/', $2) <> ''
+       ORDER BY name ASC
+       LIMIT $3`,
+      [prefix, dirDepth, limit]
+    );
+    for (const row of dirResult.rows as Array<{ name: string }>) {
+      const childPath = normalizedPath === "/"
+        ? `/${row.name}`
+        : `${normalizedPath}/${row.name}`;
+      dirs.push({
+        name: row.name,
+        type: "directory",
+        file_id: null,
+        file_path: childPath,
+        extension: "",
+        mime_type: "httpd/unix-directory",
+        size: "0 B",
+        size_bytes: 0,
+        last_modified: "",
+        web_url: null,
+      });
+    }
   }
 
-  const result = await query(sql, params);
-
-  const rows = result.rows.slice(0, limit);
-
+  const items = [...dirs, ...files].slice(0, limit);
   return {
     ok: true,
     path: normalizedPath,
     recursive,
-    count: rows.length,
-    items: rows.map((row: FileRow) => ({
-      name: row.file_name,
-      type: row.is_directory ? "directory" : "file",
-      file_id: row.nextcloud_file_id || null,
-      file_path: row.file_path,
-      extension: row.extension,
-      mime_type: row.mime_type,
-      size: formatBytes(Number(row.size_bytes || 0)),
-      size_bytes: Number(row.size_bytes || 0),
-      last_modified: formatDateTime(row.last_modified),
-      web_url: row.web_url,
-    })),
+    count: items.length,
+    directoryCount: dirs.length,
+    fileCount: files.length,
+    items,
   };
 }
